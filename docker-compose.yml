@@ -1,0 +1,89 @@
+name: bvt-mdm
+
+services:
+  db:
+    image: postgres:16
+    profiles: ["db"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:?set in .env}
+      POSTGRES_DB: postgres
+      MDM_MIGRATOR_PASSWORD: ${MDM_MIGRATOR_PASSWORD:?set in .env}
+      MDM_APP_PASSWORD: ${MDM_APP_PASSWORD:?set in .env}
+      MDM_READONLY_PASSWORD: ${MDM_READONLY_PASSWORD:?set in .env}
+    ports:
+      - "127.0.0.1:54330:5432"
+    volumes:
+      - mdm_pg_data:/var/lib/postgresql/data
+      - ./db/bootstrap.sql:/bootstrap/bootstrap.sql:ro
+      - ./db/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d mdm"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # One-shot: applies Alembic migrations as mdm_migrator. Only this service sees that password.
+  migrate:
+    build: ./api
+    profiles: ["tools"]
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      MIGRATION_DATABASE_URL: postgresql+psycopg://mdm_migrator:${MDM_MIGRATOR_PASSWORD}@db:5432/mdm
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+
+  api:
+    build: ./api
+    restart: unless-stopped
+    # Explicit list on purpose: the API never receives superuser/migrator credentials.
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      WEB_ORIGIN: http://localhost:8080
+      DATABASE_URL: postgresql+psycopg://mdm_app:${MDM_APP_PASSWORD}@db:5432/mdm
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      OIDC_REDIRECT_URI: http://localhost:8080/auth/callback
+      ALLOWED_HOSTED_DOMAIN: ${ALLOWED_HOSTED_DOMAIN:-buenavidatrading.com}
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
+      SESSION_IDLE_MINUTES: ${SESSION_IDLE_MINUTES:-30}
+      SESSION_ABSOLUTE_HOURS: ${SESSION_ABSOLUTE_HOURS:-8}
+      UPLOAD_DIR: /var/lib/mdm/uploads
+      UPLOAD_MAX_BYTES: ${UPLOAD_MAX_BYTES:-20971520}
+    # No host port: the browser reaches the API only through web (localhost:8080).
+    expose: ["8000"]
+    volumes:
+      - mdm_uploads:/var/lib/mdm/uploads
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3).status == 200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build: ./web
+    restart: unless-stopped
+    depends_on: [api]
+    ports:
+      - "127.0.0.1:8080:8080"
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/cache/nginx
+      - /var/run
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  mdm_pg_data:
+  mdm_uploads:

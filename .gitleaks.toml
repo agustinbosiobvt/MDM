@@ -1,0 +1,16 @@
+# gitleaks: default rules, minus local-only files that git never sees.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Ignored, never-committed paths"
+paths = [
+  '''(^|/)\.env$''',
+  '''(^|/)node_modules/''',
+  '''(^|/)\.venv/''',
+  '''(^|/)dist/''',
+  '''(^|/)samples/''',
+  '''(^|/)\.(mypy|ruff|pytest)_cache/''',
+  '''(^|/)uv\.lock$''',
+  '''(^|/)package-lock\.json$''',
+]
