@@ -1,0 +1,39 @@
+# Overlay for the Playwright e2e suite (`make e2e`). NOT for normal use.
+#
+# - The real api/web images run unchanged, but the API points at a mock Google
+#   (mock-oidc) and at its own database, mdm_e2e, so real data is never touched.
+# - `make e2e` restores the normal stack afterwards.
+services:
+  mock-oidc:
+    image: bvt-mdm-api
+    pull_policy: never
+    command: ["uvicorn", "mock_oidc:app", "--app-dir", "/e2e", "--host", "0.0.0.0", "--port", "8090"]
+    environment:
+      MOCK_ISSUER: https://mock-oidc.e2e
+      MOCK_CLIENT_ID: e2e-client
+      MOCK_CLIENT_SECRET: e2e-secret
+      MOCK_REDIRECT_URI: http://localhost:8080/auth/callback
+    volumes:
+      - ./e2e/mock_oidc:/e2e:ro
+    ports:
+      - "127.0.0.1:8090:8090"   # the browser visits the mock's "consent screen"
+
+  migrate:
+    command: ["sh", "-c", "python scripts/reset_schema.py && alembic upgrade head"]
+    environment:
+      MIGRATION_DATABASE_URL: postgresql+psycopg://mdm_migrator:${MDM_MIGRATOR_PASSWORD}@db:5432/mdm_e2e
+
+  api:
+    depends_on: [mock-oidc]
+    environment:
+      APP_ENV: e2e
+      DATABASE_URL: postgresql+psycopg://mdm_app:${MDM_APP_PASSWORD}@db:5432/mdm_e2e
+      GOOGLE_CLIENT_ID: e2e-client
+      GOOGLE_CLIENT_SECRET: e2e-secret
+      OIDC_ISSUER: https://mock-oidc.e2e
+      OIDC_AUTHORIZATION_ENDPOINT: http://localhost:8090/authorize   # browser-facing
+      OIDC_TOKEN_ENDPOINT: http://mock-oidc:8090/token               # server-to-server
+      OIDC_JWKS_URI: http://mock-oidc:8090/jwks
+      BOOTSTRAP_ADMIN_EMAIL: e2e-admin@buenavidatrading.com
+      AUTH_RATE_LIMIT: 1000/minute
+      IMPORT_RATE_LIMIT: 1000/minute

@@ -32,21 +32,28 @@ ALTER ROLE mdm_readonly SET default_transaction_read_only = on;
 ALTER ROLE mdm_readonly SET statement_timeout = '300s';
 
 -- Databases -----------------------------------------------------------------
--- mdm: the application database. mdm_test: used by pytest only.
+-- mdm: the application database. mdm_test: pytest only. mdm_e2e: Playwright only.
 SELECT 'CREATE DATABASE mdm OWNER mdm_migrator ENCODING ''UTF8'' TEMPLATE template0'
 WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'mdm') \gexec
 SELECT 'CREATE DATABASE mdm_test OWNER mdm_migrator ENCODING ''UTF8'' TEMPLATE template0'
 WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'mdm_test') \gexec
+SELECT 'CREATE DATABASE mdm_e2e OWNER mdm_migrator ENCODING ''UTF8'' TEMPLATE template0'
+WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'mdm_e2e') \gexec
 
 REVOKE ALL ON DATABASE mdm      FROM PUBLIC;
 REVOKE ALL ON DATABASE mdm_test FROM PUBLIC;
+REVOKE ALL ON DATABASE mdm_e2e  FROM PUBLIC;
 GRANT CONNECT, TEMPORARY ON DATABASE mdm      TO mdm_app;
 GRANT CONNECT, TEMPORARY ON DATABASE mdm_test TO mdm_app;
+GRANT CONNECT, TEMPORARY ON DATABASE mdm_e2e  TO mdm_app;
 GRANT CONNECT ON DATABASE mdm      TO mdm_readonly;
 GRANT CONNECT ON DATABASE mdm_test TO mdm_readonly;
+GRANT CONNECT ON DATABASE mdm_e2e  TO mdm_readonly;
 
 -- Nobody but the owner may create objects in public.
 \connect mdm
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
 \connect mdm_test
+REVOKE ALL ON SCHEMA public FROM PUBLIC;
+\connect mdm_e2e
 REVOKE ALL ON SCHEMA public FROM PUBLIC;

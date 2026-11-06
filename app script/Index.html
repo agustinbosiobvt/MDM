@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="es">
+<head><base target="_top"><meta charset="utf-8"><?!= include_('Styles'); ?></head>
+<body>
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand"><span class="brand-mark">bvt<span>®</span></span><div>BUENA VIDA TRADING<small>MASTER DATA</small></div></div>
+    <p class="nav-label">ESPACIO DE TRABAJO</p>
+    <nav aria-label="Navegación principal">
+      <button data-nav="home" class="selected"><span>⌂</span> Inicio</button>
+      <button data-nav="company"><span>▤</span> Empresas</button>
+      <button data-nav="customer"><span>◉</span> Clientes</button>
+      <button data-nav="vendor"><span>◇</span> Proveedores</button>
+    </nav>
+    <div class="sidebar-bottom"><span class="live-dot"></span> Google Workspace<div id="user-email">Conectando…</div></div>
+  </aside>
+  <div class="main-shell">
+    <header class="topbar"><div id="breadcrumb">MDM / Inicio</div><div class="workspace-pill">BVT Workspace <span class="avatar">BV</span></div></header>
+    <main id="main" aria-live="polite"><div class="empty">Cargando tu espacio de trabajo…</div></main>
+    <footer>Buena Vida Trading <span>Datos maestros · Una fuente compartida</span></footer>
+  </div>
+</div>
+<div id="busy" class="busy" hidden><span class="spinner"></span><span id="busy-text">Guardando…</span></div>
+<div id="toast" role="status" hidden></div>
+<dialog id="modal"><div class="modal-head"><div><div class="eyebrow" id="modal-eyebrow">BVT MDM</div><h2 id="modal-title"></h2></div><button type="button" class="icon-button" id="close-modal" aria-label="Cerrar">×</button></div><div id="modal-body"></div></dialog>
+<?!= include_('App'); ?>
+<?!= include_('Lists'); ?>
+<?!= include_('Forms'); ?>
+<?!= include_('ImportWizard'); ?>
+</body></html>

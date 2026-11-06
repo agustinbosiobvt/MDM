@@ -30,3 +30,6 @@ api/var/
 Thumbs.db
 .idea/
 .vscode/
+
+# Price list files prepared for import (commercial data)
+imports/

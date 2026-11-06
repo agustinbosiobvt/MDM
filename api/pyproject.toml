@@ -7,7 +7,8 @@ dependencies = [
     "alembic>=1.20.0",
     "authlib>=1.9.1",
     "fastapi>=0.143.2",
-    "httpx>=0.28.1",
+    "httpx2>=2.13.1",
+    "joserfc>=1.7.5",
     "openpyxl>=3.1.5",
     "psycopg[binary]>=3.3.6",
     "pydantic>=2",
@@ -29,12 +30,15 @@ target-version = "py312"
 select = ["E", "F", "W", "I", "B", "UP", "S", "N", "SIM", "RUF", "DTZ", "PT"]
 ignore = []
 
+[tool.ruff.lint.pep8-naming]
+classmethod-decorators = ["declared_attr"]
+
 [tool.ruff.lint.isort]
 known-first-party = ["app", "alembic_helpers"]
 known-third-party = ["alembic"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101", "S105", "S106"]
+"tests/**" = ["S101", "S105", "S106", "E501"]  # long fixture rows read better on one line
 "alembic/versions/**" = ["E501"]
 
 [tool.mypy]
@@ -50,7 +54,9 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers"
-filterwarnings = ["error::DeprecationWarning:app.*"]
+filterwarnings = [
+  "error::DeprecationWarning:app.*",
+]
 
 [tool.bandit]
 exclude_dirs = ["tests", ".venv"]
@@ -58,7 +64,6 @@ exclude_dirs = ["tests", ".venv"]
 [dependency-groups]
 dev = [
     "bandit>=1.9.4",
-    "httpx2>=2.13.1",
     "mypy>=2.4.0",
     "pip-audit>=2.10.1",
     "pycountry>=26.2.16",

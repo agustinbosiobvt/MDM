@@ -1,7 +1,8 @@
-name: bvt-mdm
+name: bvt
 
 services:
   db:
+    container_name: bvt-mdm-db-1
     image: postgres:16
     profiles: ["db"]
     restart: unless-stopped
@@ -26,6 +27,7 @@ services:
 
   # One-shot: applies Alembic migrations as mdm_migrator. Only this service sees that password.
   migrate:
+    image: bvt-mdm-migrate
     build: ./api
     profiles: ["tools"]
     command: ["alembic", "upgrade", "head"]
@@ -37,6 +39,8 @@ services:
     cap_drop: [ALL]
 
   api:
+    container_name: bvt-mdm-api-1
+    image: bvt-mdm-api
     build: ./api
     restart: unless-stopped
     # Explicit list on purpose: the API never receives superuser/migrator credentials.
@@ -52,6 +56,8 @@ services:
       BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
       SESSION_IDLE_MINUTES: ${SESSION_IDLE_MINUTES:-30}
       SESSION_ABSOLUTE_HOURS: ${SESSION_ABSOLUTE_HOURS:-8}
+      AUTH_RATE_LIMIT: ${AUTH_RATE_LIMIT:-20/minute}
+      IMPORT_RATE_LIMIT: ${IMPORT_RATE_LIMIT:-30/minute}
       UPLOAD_DIR: /var/lib/mdm/uploads
       UPLOAD_MAX_BYTES: ${UPLOAD_MAX_BYTES:-20971520}
     # No host port: the browser reaches the API only through web (localhost:8080).
@@ -71,6 +77,8 @@ services:
       retries: 5
 
   web:
+    container_name: bvt-mdm-web-1
+    image: bvt-mdm-web
     build: ./web
     restart: unless-stopped
     depends_on: [api]
@@ -83,7 +91,17 @@ services:
       - /var/run
     security_opt:
       - no-new-privileges:true
+    cap_drop: [ALL]
 
 volumes:
   mdm_pg_data:
+    name: bvt-mdm_mdm_pg_data
+    external: true
   mdm_uploads:
+    name: bvt-mdm_mdm_uploads
+    external: true
+
+networks:
+  default:
+    name: bvt-mdm_default
+    external: true

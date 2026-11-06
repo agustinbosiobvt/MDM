@@ -14,6 +14,7 @@ COPY --from=build /srv/.venv /srv/.venv
 COPY app ./app
 COPY alembic ./alembic
 COPY alembic.ini ./
+COPY scripts ./scripts
 ENV PATH="/srv/.venv/bin:$PATH" PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 USER mdm
 EXPOSE 8000

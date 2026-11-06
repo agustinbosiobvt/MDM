@@ -8,9 +8,11 @@ Work in the phases at the end of this prompt. **Start in plan mode:** inspect th
 
 Three modules. Each one has a list (search, filter, sort, paginate), a detail view, add, edit and remove:
 
-1. **Company**: BVT's own data. Identity (legal name, trade name, Tax ID/VAT, EORI), several addresses (registered, billing, warehouse), contacts/responsible people (name, role, email, phone, primary), base currency (default EUR).
-2. **Customers** (e.g. Amazon MX, Amazon US): identity, country, default currency, payment terms, Incoterm, vendor codes (Amazon parent/child vendor code), addresses, contacts, and **price lists**.
-3. **Vendors** (brands/manufacturers, e.g. Nobby): identity, EORI, country, default currency, payment terms, Incoterm, lead time in days, MOQ, addresses, contacts, and **price lists**.
+1. **Company**: BVT's own data. Identity (code, legal name, trade name, EORI, country, **tax registration number**: free text, optional, e.g. `TRN 104965266000001`, printed on BVT's commercial invoices; Company only, not on customers or vendors), several addresses (registered, billing, warehouse), contacts/responsible people (name, job title, email, phone, primary). Several companies are allowed; one is marked as the default. **No Tax ID and no currency.**
+2. **Customers** (e.g. Amazon MX, Amazon US): code, legal name, trade name, country, business status (Active / On hold / Blocked), default currency, payment terms, Incoterm, addresses (billing / ship-to, several), contacts, Amazon vendor codes (several parent/child pairs per customer, with optional destination country), and their **price list** (see below). **No Tax ID.**
+3. **Vendors** (brands/manufacturers, e.g. Nobby): code, legal name, trade name, EORI, country, business status (Active / On hold / Blocked), default currency, payment terms, Incoterm, lead time in days, MOQ, addresses (billing / pick-up / factory), contacts (contact role Sales / Logistics / Quality / Other, plus job title), and their **price list** (see below). **No Tax ID.**
+
+**Where price lists live:** there is **no separate "Price lists" menu**. Price lists live inside the customer or vendor: open a customer → its data at the top, then a **Price list** section for that customer (same for vendors). The section has the **"Import price list"** button, the **lines table**, **filters** (category, brand, and a search box for EAN / ASIN / description), the **last update and who made it**, the **status**, and the **version history**.
 
 Out of scope for v1: price and margin comparison, FX conversion, product master, POs and shipments. The v1 data model must not block any of them.
 
@@ -34,7 +36,7 @@ There is already a first draft of the schema in my local Postgres. Before you de
 - **Remove = soft delete** (`is_active = false`). Only an Admin can hard delete, and only after a confirmation.
 - **Audit log table** `mdm.audit_log`: who, when, entity, entity_id, action, old values and new values (JSONB). The app's DB role has INSERT-only permission on it.
 - Standards: ISO 3166-1 alpha-2 countries, ISO 4217 currency codes (lookup tables, seeded), ISO 8601 dates. **Money is `NUMERIC(18,4)`, never float.**
-- Duplicates are blocked: a unique Tax ID per customer/vendor, and a unique code.
+- Duplicates are blocked: a unique code (across company, customers and vendors), and an active Amazon parent/child vendor-code pair belongs to one customer only.
 
 ## 5. Price lists: the critical part
 
@@ -42,7 +44,7 @@ The same model serves customers and vendors (`owner_type` = customer | vendor + 
 
 **price_list (header):** name, owner, default currency, valid_from, valid_to, status (Draft / Active / Expired), source file name, source file SHA-256, imported_at, imported_by, notes.
 
-**price_list_line:** one row per product: `ean` (text), `asin` (text), `vendor_sku` (text), description, brand, case pack qty, MOQ, unit of measure, country of origin, HS code, raw source row (JSONB, kept for traceability).
+**price_list_line:** one row per product: `ean` (text), `asin` (text), `vendor_sku` (text), description, **category**, brand, case pack qty, MOQ, unit of measure, country of origin, HS code, raw source row (JSONB, kept for traceability). **Category and brand** are filled from the file during import mapping when the file has them, and the user can edit them later on the line (they are the only editable line fields; prices are never edited).
 
 **price_list_line_price:** a line can carry **several prices, each with its own currency**: `price_type` (purchase, domestic_cost, import_cost, rrp, rrp_ex_vat, retailer_cost, …, as a lookup table), `amount NUMERIC(18,4)`, `currency CHAR(3)` (required, never inferred silently).
 
@@ -59,9 +61,13 @@ The formats differ, so build an **import wizard with column mapping**, not a fix
 
 1. Upload (.xlsx/.csv only; reject .xlsm/.xls; max 20 MB; read with openpyxl `read_only=True, data_only=True`, so formulas are never executed and only cached values are read).
 2. Pick the sheet and the **header row** (auto-detect it, and let the user change it). Show a preview of 20 rows.
-3. Map columns to fields. For every price column, choose its price_type and **its currency**, either (a) a fixed value, (b) another column, or (c) auto-suggested from the header (`(USD)`, `€`, `(MXN)`). The user always confirms.
+3. Map columns to fields (including category and brand when the file has them). For every price column, choose its price_type and **its currency**, either (a) a fixed value, (b) another column, or (c) auto-suggested from the header (`(USD)`, `€`, `(MXN)`). The user always confirms.
 4. Validate. Show a report: rows OK, rows with warnings (invalid EAN, missing currency, duplicate key in the file), rows rejected. Then the user confirms the import.
 5. **Save the mapping as a template** per customer/vendor, so next month's file imports in one click.
+
+Brand is mapped from the file when present (Amazon: `Brand Name`). Neither sample file has a category column, so after importing them category stays empty and is edited per line.
+
+**Performance targets** (per sample file, about 7,500 rows, measured in the Docker stack and asserted by an automated test): preview + header detection < 5 s; validation report < 15 s; commit import < 30 s. In the Price list section, the first page of lines and each filter/search < 1 s.
 
 What the two sample files look like (use them as test fixtures; don't commit them, add `samples/` to `.gitignore`):
 
@@ -112,7 +118,7 @@ Hiding a button in the UI is not security: write tests proving each role gets 40
 3. **Auth:** Google login end to end, allow-list, roles, sessions, audit log, plus the security tests.
 4. **Company module:** full CRUD; this validates the pattern for the rest.
 5. **Customers + Vendors:** CRUD with addresses and contacts.
-6. **Price lists + import wizard:** mapping templates, validation report, versioning, tested on both samples.
+6. **Price lists + import wizard:** the Price list section on the customer/vendor page (line filters: category, brand, EAN/ASIN/description search), the "Import price list" button and wizard, mapping templates, validation report, versioning, tested on both samples.
 7. **Hardening:** run all scans, fix the findings, and write a README with setup steps, a security checklist and known limitations.
 
 Definition of done for every phase: tests pass, lint and type-check pass (ruff, mypy, eslint, tsc), no secrets in the repo, and the README is updated.
@@ -123,11 +129,11 @@ Keep this list updated at the end of each phase (tick it off and add one line on
 
 - [x] Phase 1 – Plan: no existing draft; party-supertype schema, roles and layout approved with D1–D4 additions (see docs/plan.md).
 - [x] Phase 2 – Skeleton: Compose (db/migrate/api/web), FastAPI + health, React shell, Alembic 0001 (lookups, app_user, audit_log), DB roles + privilege tests, make check green.
-- [ ] Phase 3 – Auth
-- [ ] Phase 4 – Company module
-- [ ] Phase 5 – Customers + Vendors
-- [ ] Phase 6 – Price lists + import wizard
-- [ ] Phase 7 – Hardening
+- [x] Phase 3 – Auth: server-side Google OIDC (PKCE, JWKS, hd/allow-list), hashed server sessions (30 min idle/8 h), 3-layer CSRF, role matrix on every route, Users admin UI; 105 API tests + 13 Playwright e2e (mock Google).
+- [x] Phase 4 – Company module: party supertype + company/address/contact (migration 0003), one default company, soft remove + Admin permanent delete, shared address/contact UI; mock-IdP isolation proven; 246 API tests + 20 Playwright e2e.
+- [x] Phase 5 – Customers + Vendors: one router factory for both (business status, payment terms, Incoterm; vendor lead time/MOQ/EORI), Amazon vendor codes, vendor contact roles, international Tax IDs (migration 0004); 387 API tests + 26 Playwright e2e. Corrected 2026-10-16 (migration 0005): Tax ID removed everywhere, Company has no currency, no separate Price lists menu.
+- [x] Phase 6 – Price lists + import wizard: Price list section inside customer/vendor pages (versions, filters category/brand/search, line edits, activation with D4 rule), 4-step import wizard (xlsx/csv, header detection, column mapping by index, per-price currency, report, saved templates); both samples import exactly (Amazon 7,515 lines/15,030 prices; Nobby 7,515/45,061); migrations 0006-0007; 555 API tests + 34 Playwright e2e; timings well under targets.
+- [x] Phase 7 – Hardening: Draft price list deletion (soft, Editor/Admin, audited; approved 2026-10-19); all scans clean; fixed OAuth code in access logs, forgeable X-Forwarded-For, undeclared input length limits, web caps; README security checklist + findings + cloud steps + limitations; 569 API tests + 35 Playwright e2e.
 
 ## Conventions
 
@@ -158,7 +164,10 @@ Added in Phase 2. The approved design lives in `docs/plan.md`; change it there f
 3. Report the phase with a **5-minute manual test checklist** (what to click, what you should see) for the user to confirm.
 
 ### Rules
+- **Do not add fields, menus or features that are not in this CLAUDE.md.** If something seems missing, ask the user first. Technical necessities (keys, audit columns, version, indexes) are fine; anything a user would see or type is not, unless it's specified here.
+- **Never run `git commit`, `git push`, or any other git command that changes history or the remote** (amend, rebase, reset, merge, tag, stash drop, …). The user makes all commits. Read-only git (`status`, `diff`, `log`, `ls-files`, `check-ignore`) is fine.
 - Browser URL is always `http://localhost:8080` (never `127.0.0.1`); the OAuth redirect URI is `http://localhost:8080/auth/callback`.
+- **Never write to the real `mdm` database from tests, scripts or ad-hoc commands** (no `psql` INSERT/UPDATE/DELETE against `mdm`). Experiments go to `mdm_test`/`mdm_e2e`. Guards: `api/tests/safety.py` (pytest), `scripts/reset_schema.py`, the API's e2e-mode check, and `e2e/global-setup.ts`.
 - A gitleaks pre-commit hook (`.githooks/pre-commit`, enabled by `make hooks`/`make install`) must stay on.
 - **Schema changes only via a new Alembic migration** that ends with `apply_grants()`. To give `mdm_app` DELETE on a table, add it to `APP_DELETE_TABLES`; never on `audit_log` or price list tables. Never edit an applied migration.
 - All tables live in schema `mdm`. UUID PKs (`gen_random_uuid()`) plus `audit_columns()`; lookups use natural code PKs.

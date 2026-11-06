@@ -1,0 +1,68 @@
+<script>
+function steps(active){const n=el('div','steps');['1. Archivo','2. Hoja y cabecera','3. Columnas y monedas','4. Validar e importar'].forEach((s,i)=>n.append(el('div','step'+(i===active?' current':''),s)));return n;}
+function wizardBody(step){const body=openModal('Importar lista de precios',true);body.append(steps(step));return body;}
+function wizardError(body,e){let box=body.querySelector('.form-error');if(!box){box=el('div','form-error');body.prepend(box);}box.textContent=e.message;}
+function optionSelect(options,value,label){const s=el('select');s.setAttribute('aria-label',label||'Seleccionar');options.forEach(([v,t])=>s.append(new Option(t,v)));s.value=value==null?'':value;return s;}
+function columnOptions(headers,empty=true){const options=empty?[['','Sin mapear']]:[];headers.forEach((h,i)=>options.push([String(i),uiLetter(i)+' · '+(h||'(sin título)')]));return options;}
+function uiLetter(n){let out='';for(n++;n>0;n=Math.floor((n-1)/26))out=String.fromCharCode(65+(n-1)%26)+out;return out;}
+function startImport(){
+  const body=wizardBody(0);S.import=null;body.append(el('p','muted','Carga una lista para '+S.record.legal_name+'. Se creará una nueva versión en borrador.'));
+  const zone=el('div','drop-zone');zone.append(el('h3','','Selecciona tu archivo'),el('div','muted','Excel .xlsx o CSV UTF-8 · Máximo 20 MB'));const input=el('input');input.type='file';input.accept='.xlsx,.csv';input.setAttribute('aria-label','Archivo de precios');zone.append(input);body.append(zone);
+  body.append(el('p','note','Los Excel se leen con los resultados de fórmulas guardados por Excel. Guarda el libro recalculado antes de cargarlo. Cada precio conservará su moneda.'));
+  const actions=el('div','modal-actions'),next=btn('Cargar y continuar →',async()=>{
+    const file=input.files[0];if(!file){wizardError(body,new Error('Selecciona un archivo.'));return;}if(file.size>20*1024*1024){wizardError(body,new Error('El archivo supera 20 MB.'));return;}next.disabled=true;$('close-modal').disabled=true;
+    try{const base64=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result).split(',')[1]);reader.onerror=()=>reject(new Error('No se pudo leer el archivo.'));reader.readAsDataURL(file);});const result=await rpc('upload',{type:S.type,owner_id:S.record.id,name:file.name,mime:file.type,base64:base64});S.import={job:result.job,upload:result,running:false};wizardSheet();}catch(e){wizardError(body,e);}finally{next.disabled=false;$('close-modal').disabled=false;}
+  },'primary');actions.append(btn('Cancelar',closeModal),next);body.append(actions);
+}
+function wizardSheet(){
+  const w=S.import,body=wizardBody(1);body.append(el('p','file-name',w.job.original_name));if(w.upload.alreadyImported.length)body.append(el('p','note notice','Este archivo ya se importó: versiones '+w.upload.alreadyImported.join(', ')+'. Puedes continuar para crear otra revisión.'));
+  const form=el('form'),grid=el('div','form-grid');grid.append(fieldNode({key:'sheet',label:'Hoja',required:true,options:w.upload.sheets.map(s=>[s.name,s.name+' · '+s.rows+' filas'])},w.upload.sheets.some(s=>s.name==='ALL')?'ALL':w.upload.sheets[0].name),fieldNode({key:'header_row',label:'Fila de cabecera (vacío = detectar)',type:'number',min:1,max:1000},''),fieldNode({key:'data_start_row',label:'Primera fila de datos (vacío = detectar)',type:'number',min:2,max:1001},''));form.append(grid);
+  if(w.upload.templates.length){const label=el('label','','Usar plantilla guardada'),select=optionSelect([['','Detectar columnas'],...w.upload.templates.map(t=>[t.id,t.name])],'','Plantilla de importación');select.id='template-choice';form.append(label,select);}
+  const actions=el('div','modal-actions'),next=el('button','btn primary','Ver muestra →');next.type='submit';actions.append(next);form.append(actions);body.append(form);
+  form.onsubmit=async e=>{e.preventDefault();next.disabled=true;try{const choice=form.querySelector('#template-choice'),template=choice&&w.upload.templates.find(t=>t.id===choice.value),saved=template?JSON.parse(template.mapping):null;w.preview=await rpc('preview',{id:w.job.id,sheet:saved?saved.sheet:form.elements.sheet.value,header_row:saved?saved.header_row:form.elements.header_row.value,data_start_row:saved?saved.data_start_row:form.elements.data_start_row.value});w.mapping=saved||w.preview.mapping;wizardMapping();}catch(err){wizardError(body,err);}finally{next.disabled=false;}};
+}
+function wizardMapping(){
+  const w=S.import,p=w.preview,m=w.mapping,body=wizardBody(2);body.append(el('p','muted','Hoja '+m.sheet+' · Cabecera '+m.header_row+' · Datos desde '+m.data_start_row+'. Las letras identifican columnas aunque los títulos se repitan.'));
+  const preview=el('div','preview'),columns=p.headers.map((h,i)=>[String(i),uiLetter(i)+' · '+h]);preview.append(dataTable(p.rows,columns,(row,key)=>row[Number(key)]));body.append(preview);
+  const form=el('form'),grid=el('div','form-grid'),fieldSelects={};
+  [['ean','EAN'],['upc','UPC'],['asin','ASIN'],['vendor_sku','SKU proveedor'],['description','Descripción'],['brand','Marca'],['category','Categoría'],['case_pack_qty','Unidades por caja'],['moq','MOQ'],['uom','Unidad de medida'],['country_of_origin','País de origen'],['hs_code','Código HS']].forEach(([key,label])=>{const n=el('div','field');n.append(el('label','',label));const s=optionSelect(columnOptions(p.headers),m.fields[key]?String(m.fields[key].col):'',label);fieldSelects[key]=s;n.append(s);grid.append(n);});form.append(grid);
+  const dims=el('div','field full');dims.style.marginTop='20px';dims.append(el('label','','Dimensiones que distinguen productos (Ctrl/Cmd para varias)'));const dimensionSelect=optionSelect(columnOptions(p.headers,false),'','Dimensiones');dimensionSelect.multiple=true;dimensionSelect.size=4;Array.from(dimensionSelect.options).forEach(o=>o.selected=m.dimensions.some(d=>d.col===Number(o.value)));dims.append(dimensionSelect);form.append(dims);
+  const priceHead=el('div','section-head');priceHead.append(el('h3','','Precios y monedas'));form.append(priceHead);const priceWrap=el('div'),priceRows=[];
+  function priceRow(pc={}){
+    const row=el('div','record-card'),fields=el('div','form-grid'),column=optionSelect(columnOptions(p.headers,false),pc.col==null?'0':String(pc.col),'Columna del importe'),type=optionSelect(S.boot.lookups.filter(r=>r.kind==='price_type').map(r=>[r.code,r.name]),pc.price_type||'purchase','Tipo de precio'),mode=optionSelect([['fixed','Moneda fija'],['column','Moneda en otra columna']],pc.currency&&pc.currency.mode||'fixed','Origen de moneda'),currency=optionSelect(S.boot.lookups.filter(r=>r.kind==='currency').map(r=>[r.code,r.code]),pc.currency&&pc.currency.value||'','Moneda fija'),ccyCol=optionSelect(columnOptions(p.headers,false),pc.currency&&pc.currency.col!=null?String(pc.currency.col):'0','Columna de moneda');
+    [['Columna del importe',column],['Tipo de precio',type],['Origen de moneda',mode],['Moneda fija',currency],['Columna de moneda',ccyCol]].forEach(([label,node])=>{const f=el('div','field');f.append(el('label','',label),node);fields.append(f);});
+    const item={row:row,column:column,type:type,mode:mode,currency:currency,ccyCol:ccyCol};const toggle=()=>{currency.parentElement.hidden=mode.value!=='fixed';ccyCol.parentElement.hidden=mode.value!=='column';};mode.onchange=toggle;toggle();row.append(fields,btn('Quitar precio',()=>{row.remove();priceRows.splice(priceRows.indexOf(item),1);},'link'));priceRows.push(item);priceWrap.append(row);
+  }
+  m.prices.forEach(priceRow);form.append(priceWrap,btn('+ Añadir precio',()=>priceRow(),'small'));
+  const check=el('label','check-row'),confirm=el('input');confirm.type='checkbox';confirm.required=true;check.append(confirm,el('span','','He revisado las columnas, los tipos de precio y la moneda de cada precio. Las columnas de margen no son precios.'));form.append(check);
+  const actions=el('div','modal-actions'),validate=el('button','btn primary','Validar datos →');validate.type='submit';actions.append(btn('← Volver',wizardSheet),validate);form.append(actions);body.append(form);
+  form.onsubmit=async e=>{e.preventDefault();validate.disabled=true;try{const ref=col=>({col:col,header:p.headers[col]});const fields={};Object.entries(fieldSelects).forEach(([key,s])=>{if(s.value!=='')fields[key]=ref(Number(s.value));});const mapping={sheet:m.sheet,header_row:m.header_row,data_start_row:m.data_start_row,fields:fields,dimensions:Array.from(dimensionSelect.selectedOptions).map(o=>ref(Number(o.value))),prices:priceRows.map(r=>Object.assign(ref(Number(r.column.value)),{price_type:r.type.value,currency:r.mode.value==='fixed'?{mode:'fixed',value:r.currency.value}:Object.assign({mode:'column'},ref(Number(r.ccyCol.value)))})),expected_headers:p.headers};w.progress=await rpc('startValidation',{id:w.job.id,mapping:mapping,confirmed:confirm.checked});w.mapping=mapping;wizardValidation();}catch(err){wizardError(body,err);}finally{validate.disabled=false;}};
+}
+async function wizardValidation(){
+  const w=S.import,body=wizardBody(3);body.append(el('h3','','Validando el archivo'),el('p','muted','Puedes mantener esta ventana abierta. Se procesan bloques de 400 filas.'));const progress=el('div','progress'),fill=el('div');progress.append(fill);const label=el('div','muted');body.append(progress,label);const retry=btn('Reintentar / continuar',()=>wizardValidation(),'primary');retry.hidden=true;body.append(retry);w.running=true;$('close-modal').disabled=true;
+  try{
+    // Refresh persisted cursor first: safe after a network failure.
+    w.progress=await rpc('importProgress',{id:w.job.id},true);
+    while(w.progress.status==='validating'){
+      label.textContent=w.progress.summary.rows_read+' filas leídas · '+w.progress.summary.lines+' líneas válidas';const source=w.upload.sheets.find(s=>s.name===w.mapping.sheet);fill.style.width=Math.min(99,100*(w.progress.cursor/(source?source.rows:1)))+'%';
+      w.progress=await rpc('validateChunk',{id:w.job.id,cursor:w.progress.cursor},true);
+    }
+    w.running=false;$('close-modal').disabled=false;wizardReport();
+  }catch(e){w.running=false;$('close-modal').disabled=false;wizardError(body,e);retry.hidden=false;}
+}
+function wizardReport(){
+  const w=S.import,s=w.progress.summary,body=wizardBody(3);body.append(el('h3','','Resultado de la validación'));const grid=el('div','summary-grid');[['Filas leídas',s.rows_read],['Líneas importables',s.lines],['Líneas sin advertencias',s.lines_ok],['Con advertencias',s.lines_with_warnings],['Filas rechazadas',s.rows_rejected],['Grupos duplicados',s.duplicate_groups]].forEach(([label,value])=>{const n=el('div','summary-box');n.append(el('strong','',value),el('span','',label));grid.append(n);});body.append(grid);
+  if(s.rows_rejected||s.duplicate_groups)body.append(el('p','note notice','Las filas sin clave se rechazan. Los duplicados deben resolverse en el borrador antes de activar.'));
+  body.append(dataTable(Object.entries(s.prices).map(([key,count])=>({key:key.replace('|',' · '),count:count})),[['key','Tipo y moneda'],['count','Precios']],(r,k)=>r[k]));
+  if(s.examples.length){const details=el('details');details.style.margin='20px 0';details.append(el('summary','','Ver advertencias (primeras 50)'));details.append(dataTable(s.examples,[['row','Fila'],['code','Aviso']],(r,k)=>r[k]));body.append(details);}
+  const form=el('form'),fields=el('div','form-grid');[
+    [{key:'name',label:'Nombre de esta lista',required:true,max:200,full:true},w.job.original_name.replace(/\.(xlsx|csv)$/i,'')],
+    [{key:'currency',label:'Moneda principal de la lista',required:true,lookup:'currency'},S.record.default_currency],
+    [{key:'valid_from',label:'Válida desde',required:true,type:'date'},w.preview.suggestedValidFrom||S.boot.today],
+    [{key:'valid_to',label:'Válida hasta (opcional)',type:'date'},''],
+    [{key:'template_name',label:'Guardar mapeo como plantilla (opcional)',max:100},''],
+    [{key:'notes',label:'Notas',type:'textarea',max:1000,full:true},'']
+  ].forEach(([f,v])=>fields.append(fieldNode(f,v)));form.append(fields);const actions=el('div','modal-actions'),save=el('button','btn primary','Crear versión en borrador');save.type='submit';save.disabled=!s.lines;actions.append(save);form.append(actions);body.append(form);
+  form.onsubmit=async e=>{e.preventDefault();save.disabled=true;w.running=true;$('close-modal').disabled=true;try{const data={id:w.job.id};['name','currency','valid_from','valid_to','template_name','notes'].forEach(k=>data[k]=form.elements.namedItem(k).value);const pl=await rpc('commit',data);S.plId=pl.id;S.import=null;$('modal').close();await loadDetail(S.record.id);toast('Versión '+pl.revision+' creada en borrador.');}catch(err){wizardError(body,err);}finally{w.running=false;$('close-modal').disabled=false;save.disabled=false;}};
+}
+</script>

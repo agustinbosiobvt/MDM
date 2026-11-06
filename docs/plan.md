@@ -23,7 +23,7 @@ Status: **approved 2026-10-16** with the additions in §3. **Scope change 2026-1
 4. **Hard delete is RESTRICT:** an Admin can hard-delete a party only if it has no price lists. Otherwise soft delete only.
 5. **Amazon vendor codes go in a child table** (`customer_vendor_code`: parent, child, destination country), because one customer has several parent/child pairs.
 6. **The line also gets a `upc` column** (Amazon has EAN and UPC). The product-key rule becomes: at least one of EAN / UPC / ASIN.
-7. **Audit for imports is one entry per import** (file, hash, counts, resulting price list), not one per line (that would be about 45k rows per file). Line/price rows are immutable once imported.
+7. **Audit for imports is one entry per import** (file, hash, counts, resulting price list), not one per line (that would be about 45k rows per file). Prices are immutable once imported; on a line, only **category** and **brand** can be edited later (each edit is audited).
 8. **The Nobby metadata block** (VAT, FX rates, "valid from") is kept verbatim in `price_list.source_metadata` (JSONB) for traceability. It is **not** written to `exchange_rate` (rule §5). "valid from" is offered as a suggestion for `valid_from`, and the user confirms it.
 9. **Added dependencies:** `psycopg[binary]` 3 (driver), `slowapi` (rate limit, in-process: fine for one instance, see limitations), `httpx` (needed by Authlib; Authlib itself pulls in `cryptography` for ID-token signature checks), `react-router`. No UI component library: plain CSS, to keep it simple.
 
@@ -36,6 +36,23 @@ Status: **approved 2026-10-16** with the additions in §3. **Scope change 2026-1
   - Lines store `dimensions` (JSONB) and `dup_key` (hash of key + dimensions).
   - The user resolves a duplicate group by excluding lines (`is_active = false`, only while the list is Draft).
   - **Activation is refused while any `dup_key` has more than one active line.**
+
+- **Phase 5 decisions (2026-10-16).**
+  - Customers and vendors have a **business status** (Active / On hold / Blocked), separate from Remove/Reactivate (soft delete).
+  - Vendor contacts have a **contact role** (Sales / Logistics / Quality / Other) next to the free-text job title. Other parties' contacts have no role.
+  - **Address types:** customers billing / ship-to; vendors billing / pick-up / factory; company registered / billing / warehouse.
+  - **Amazon vendor codes:** an active parent/child pair belongs to one customer only.
+
+- **Spec corrections (2026-10-16, migration 0005).**
+  - **No Tax ID** on Company, customers or vendors (columns, duplicate check and search removed).
+  - **No currency on Company.** `default_currency` lives on `customer` and `vendor` only (moved off `party`), and on every price.
+  - **No separate "Price lists" menu.** Price lists live inside the customer/vendor page: its data at the top, then a **Price list** section, with an **"Import price list"** button there. The Price list section filters lines by **category**, **brand**, and a search box for **EAN / ASIN / description**.
+  - `price_list_line` gets a **category** column next to brand. Both are filled from the file during import mapping when the file has them, and both can be edited later.
+  - New rule: no fields, menus or features beyond CLAUDE.md without asking first.
+
+- **Draft deletion (approved 2026-10-19, after Phase 6).**
+  - A price list version can be deleted **only while it is Draft** (never Active or Expired), by an Editor or Admin, after a confirmation dialog. It is written to the audit log (`price_list` / `delete`, with name, status, revision, currency, line count and source file).
+  - It is a **soft delete** (`price_list.is_active = false`), following §4 "Remove = soft delete" and the rule that `mdm_app` never gets DELETE on price list tables. The version disappears from the history, its endpoints return 404, and the file no longer counts as "already imported". The rows stay in the database, so the revision number is not reused (the next import takes max + 1), and a customer/vendor that ever had a price list still can't be deleted permanently.
 
 ## 4. Schema (`mdm`, Alembic-only)
 
@@ -85,29 +102,29 @@ erDiagram
         text code UK
         text legal_name
         text trade_name
-        text tax_id "UK per party_type"
         text eori
         char2 country_code FK
-        char3 default_currency FK
     }
     company {
         uuid party_id PK
-        char3 base_currency "default EUR"
-        bool is_default
+        text party_type "always company (composite FK)"
+        bool is_default "one true (partial unique index)"
     }
     customer {
         uuid party_id PK
+        text status "active|on_hold|blocked"
+        char3 default_currency FK
         text payment_term_code FK
         text incoterm_code FK
-        text incoterm_place
     }
     vendor {
         uuid party_id PK
+        text status "active|on_hold|blocked"
+        char3 default_currency FK
         text payment_term_code FK
         text incoterm_code FK
-        text incoterm_place
-        int lead_time_days
-        int moq
+        int lead_time_days "0-730"
+        int moq ">= 1"
     }
     customer_vendor_code {
         uuid id PK
@@ -115,6 +132,7 @@ erDiagram
         text parent_code
         text child_code
         char2 destination_country
+        text description
     }
     address {
         uuid id PK
@@ -126,7 +144,6 @@ erDiagram
         text city
         text region
         char2 country_code FK
-        bool is_primary
     }
     contact {
         uuid id PK
@@ -164,7 +181,8 @@ erDiagram
         text asin
         text vendor_sku
         text description
-        text brand
+        text category "from the file or edited later"
+        text brand "from the file or edited later"
         int case_pack_qty
         int moq
         text uom
@@ -239,7 +257,8 @@ erDiagram
 Lookups (seeded by a data migration): `country` (ISO 3166-1 α-2, 249 rows), `currency` (ISO 4217 active codes + minor units), `price_type` (purchase, domestic_cost, import_cost, rrp, rrp_ex_vat, retailer_cost; Admin can add more), `incoterm` (Incoterms 2020: EXW…DDP), `payment_term` (e.g. NET30, NET60, PREPAY; Admin-editable). Also `oauth_login_state` (state, nonce, PKCE verifier, 10-min TTL; server-side, so nothing sensitive goes in a cookie).
 
 Key constraints:
-- `party`: `UNIQUE(code)`; `UNIQUE(party_type, tax_id_normalized)` across all rows, including inactive ones (reactivate instead of re-creating).
+- Built in Phase 4 (2026-10-16): addresses have no `is_primary` (one per type is the norm; add it if customers need a default shipping address); (Tax ID removed in migration 0005.)
+- `party`: `UNIQUE(code)` across company, customers and vendors (inactive rows included: reactivate instead of re-creating).
 - `price_list`: `EXCLUDE USING gist (party_id WITH =, currency WITH =, daterange(valid_from, valid_to, '[]') WITH &&) WHERE (status = 'active')` (needs `btree_gist`). Activation runs in one transaction: lock the owner's lists, expire the overlapping active one (`valid_to = new.valid_from − 1`, status expired), activate the new one. Lists whose `valid_to` has passed are shown and treated as Expired.
 - `price_list_line`: `CHECK (ean IS NOT NULL OR upc IS NOT NULL OR asin IS NOT NULL)`, `CHECK (asin ~ '^[A-Z0-9]{10}$')`, and an index on `(ean)` and `(asin)` for future cross-list matching (margin analysis).
 - `price_list_line_price`: `UNIQUE(line_id, price_type, currency)`, `amount NUMERIC(18,4) NOT NULL`, `currency NOT NULL`.

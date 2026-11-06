@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../api/client'
+import { useMe } from '../../auth/context'
 
 interface Health {
   status: string
@@ -7,6 +8,7 @@ interface Health {
 }
 
 export function HomePage() {
+  const me = useMe()
   const health = useQuery({
     queryKey: ['health'],
     queryFn: () => api<Health>('/api/health'),
@@ -14,9 +16,14 @@ export function HomePage() {
   })
 
   return (
-    <section>
-      <h1>BVT Master Data</h1>
-      <p className="muted">Company, customers, vendors and price lists.</p>
+    <section className="stack">
+      <div>
+        <h1>Welcome, {me.display_name ?? me.email}</h1>
+        <p className="muted">
+          BVT Master Data: company, customers, vendors and price lists. You are signed in as{' '}
+          <strong>{me.role}</strong>.
+        </p>
+      </div>
       <div className="card">
         <h2>System status</h2>
         {health.isPending && <p>Checking…</p>}

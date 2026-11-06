@@ -1,0 +1,36 @@
+<script>
+function partyFields(type){
+  const fields=[{key:'code',label:'Código',required:true,max:20},{key:'country_code',label:'País',required:true,lookup:'country'},{key:'legal_name',label:'Razón social',required:true,max:200,full:true},{key:'trade_name',label:'Nombre comercial',max:200,full:true}];
+  if(type!=='customer')fields.push({key:'eori',label:'EORI',max:17});
+  if(type==='company')fields.push({key:'tax_registration_number',label:'Número de registro fiscal',max:50});
+  else fields.push({key:'status',label:'Estado comercial',required:true,options:[['active','Activo'],['on_hold','En espera'],['blocked','Bloqueado']]},{key:'default_currency',label:'Moneda predeterminada',required:true,lookup:'currency'},{key:'payment_term_code',label:'Condiciones de pago',lookup:'payment_term'},{key:'incoterm_code',label:'Incoterm',lookup:'incoterm'});
+  if(type==='vendor')fields.push({key:'lead_time_days',label:'Plazo de entrega (días)',type:'number',min:0,max:730},{key:'moq',label:'Pedido mínimo (MOQ)',type:'number',min:1,max:2147483647});return fields;
+}
+function fieldNode(field,value){
+  const wrap=el('div','field'+(field.full?' full':'')),id='field-'+field.key,label=el('label','',field.label+(field.required?' *':''));label.htmlFor=id;wrap.append(label);
+  const input=el(field.options||field.lookup?'select':field.type==='textarea'?'textarea':'input');input.name=field.key;input.id=id;
+  if(field.options||field.lookup){input.append(new Option('Seleccionar…',''));const options=field.lookup?S.boot.lookups.filter(r=>r.kind===field.lookup).map(r=>[r.code,r.code+' · '+r.name]):field.options;options.forEach(([v,t])=>input.append(new Option(t,v)));}else{input.type=field.type||'text';if(field.max!=null){if(field.type==='number')input.max=field.max;else input.maxLength=field.max;}if(field.min!=null)input.min=field.min;if(field.type==='number')input.step='1';}
+  input.value=value==null?'':value;if(field.required)input.required=true;wrap.append(input);const error=el('span','field-error');error.dataset.error=field.key;wrap.append(error);return wrap;
+}
+function buildForm(title,fields,record,onSave){
+  const body=openModal(title),form=el('form'),error=el('div','form-error');error.setAttribute('role','alert');form.append(error);const grid=el('div','form-grid');fields.forEach(f=>grid.append(fieldNode(f,record[f.key])));form.append(grid);
+  const actions=el('div','modal-actions'),cancel=btn('Cancelar',closeModal),submit=el('button','btn primary','Guardar');submit.type='submit';actions.append(cancel,submit);form.append(actions);body.append(form);
+  form.onsubmit=async event=>{event.preventDefault();error.textContent='';form.querySelectorAll('[data-error]').forEach(n=>n.textContent='');submit.disabled=true;const data={};fields.forEach(f=>data[f.key]=form.elements.namedItem(f.key).value);try{await onSave(data);$('modal').close();toast('Cambios guardados.');}catch(e){error.textContent=e.message;const n=Array.from(form.querySelectorAll('[data-error]')).find(n=>n.dataset.error===e.field);if(n)n.textContent=e.message;}finally{submit.disabled=false;}};
+  setTimeout(()=>{const input=form.querySelector('input,select');if(input)input.focus();},0);return form;
+}
+function recordForm(record={}){const type=S.type;const defaults=Object.assign({status:'active'},record);buildForm(record.id?'Editar '+record.code:'Nuevo registro',partyFields(type),defaults,async data=>{const row=await rpc('saveParty',{type:type,id:record.id,version:record.version,data:data});await loadDetail(row.id);});}
+function addressTypes(){return S.type==='company'?[['registered','Domicilio social'],['billing','Facturación'],['warehouse','Almacén']]:S.type==='customer'?[['billing','Facturación'],['ship_to','Entrega']]:[['billing','Facturación'],['pick_up','Recogida'],['factory','Fábrica']];}
+function childForm(table,record={}){
+  let fields;
+  if(table==='Addresses')fields=[{key:'address_type',label:'Tipo de dirección',required:true,options:addressTypes()},{key:'country_code',label:'País',required:true,lookup:'country'},{key:'line1',label:'Dirección',required:true,max:200,full:true},{key:'line2',label:'Complemento',max:200,full:true},{key:'city',label:'Ciudad',required:true,max:100},{key:'postal_code',label:'Código postal',max:20},{key:'region',label:'Región / provincia',max:100}];
+  else if(table==='Contacts'){fields=[{key:'name',label:'Nombre',required:true,max:200,full:true},{key:'role_title',label:'Cargo',max:100},{key:'email',label:'Correo',type:'email',max:254},{key:'phone',label:'Teléfono',max:40}];if(S.type==='vendor')fields.push({key:'contact_role',label:'Área de contacto',options:[['sales','Ventas'],['logistics','Logística'],['quality','Calidad'],['other','Otra']]});}
+  else fields=[{key:'parent_code',label:'Código padre',required:true,max:20},{key:'child_code',label:'Código hijo',required:true,max:20},{key:'destination_country',label:'País de destino',lookup:'country'}];
+  buildForm(record.id?'Editar registro':'Añadir registro',fields,record,async data=>{await rpc('saveChild',{type:S.type,owner_id:S.record.id,table:table,id:record.id,version:record.version,data:data});await loadDetail(S.record.id);});
+}
+function lineForm(row){buildForm('Editar marca y categoría',[{key:'brand',label:'Marca',max:100},{key:'category',label:'Categoría',max:100}],row,async data=>{await rpc('editLine',{price_list_id:S.plId,id:row.id,version:row.version,brand:data.brand,category:data.category});await renderLines();});}
+function confirmAction(title,text,expected,action){
+  const body=openModal(title),p=el('p','muted',text);body.append(p);const error=el('div','form-error');body.append(error);let input;
+  if(expected){body.append(el('p','','Escribe: '+expected));const field=fieldNode({key:'confirm',label:'Confirmación',required:true,max:200},'');input=field.querySelector('input');body.append(field);}
+  const actions=el('div','modal-actions'),cancel=btn('Cancelar',closeModal),confirm=btn('Confirmar',async()=>{confirm.disabled=true;error.textContent='';try{if(expected&&input.value!==expected)throw new Error('La confirmación no coincide.');await action();$('modal').close();toast('Operación completada.');}catch(e){error.textContent=e.message;}finally{confirm.disabled=false;}},'primary');if(expected){confirm.disabled=true;input.oninput=()=>confirm.disabled=input.value!==expected;}actions.append(cancel,confirm);body.append(actions);
+}
+</script>

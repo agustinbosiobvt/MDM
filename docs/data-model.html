@@ -1,0 +1,480 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BVT MDM Data Model</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column; diagrams scroll sideways inside their own frames. */
+:root {
+  --bg: #f6f7f8;
+  --surface: #ffffff;
+  --fg: #1c2329;
+  --muted: #5b6670;
+  --line: #d9dee3;
+  --accent: #1f6f8b;
+  --accent-soft: #e3f0f4;
+  --font-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #12171b; --surface: #1a2126; --fg: #e4e9ed; --muted: #9aa6b0;
+    --line: #2d363d; --accent: #6cb8d2; --accent-soft: #1d3440; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #12171b; --surface: #1a2126; --fg: #e4e9ed; --muted: #9aa6b0;
+  --line: #2d363d; --accent: #6cb8d2; --accent-soft: #1d3440; color-scheme: dark;
+}
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15px; line-height: 1.55; }
+.wrap { max-width: 1080px; margin: 0 auto; padding-block: 32px 64px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 40px; }
+header { display: grid; gap: 10px; }
+.eyebrow { font-family: var(--font-mono); font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--accent); }
+h1 { font-size: 30px; line-height: 1.2; margin: 0; font-weight: 600; text-wrap: balance; }
+h2 { font-size: 20px; margin: 0; font-weight: 600; text-wrap: balance; }
+p { margin: 0; max-width: 68ch; }
+.muted { color: var(--muted); }
+code, .mono { font-family: var(--font-mono); font-size: .92em; }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 13px; color: var(--muted); }
+.legend span b { color: var(--fg); font-family: var(--font-mono); font-weight: 500; }
+section { display: grid; gap: 14px; }
+.frame { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; overflow-x: auto; padding: 16px; }
+.frame pre.mermaid { margin: 0; min-width: 760px; text-align: center; background: transparent; }
+.note { border-left: 3px solid var(--accent); background: var(--accent-soft); padding: 10px 14px; font-size: 14px; max-width: 76ch; }
+.tables { display: grid; gap: 8px; }
+details { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; }
+summary { cursor: pointer; padding: 10px 14px; display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; }
+summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+summary .t { font-family: var(--font-mono); font-weight: 500; }
+summary .d { color: var(--muted); font-size: 14px; }
+.cols { overflow-x: auto; padding: 0 14px 12px; }
+table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+th, td { text-align: left; padding: 5px 10px 5px 0; border-top: 1px solid var(--line); vertical-align: top; }
+th { font-weight: 500; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; border-top: 0; }
+td:first-child { font-family: var(--font-mono); white-space: nowrap; }
+.k { display: inline-block; font-family: var(--font-mono); font-size: 11px; padding: 0 6px; border-radius: 3px; background: var(--accent-soft); color: var(--accent); margin-right: 4px; }
+.group-title { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-top: 10px; }
+</style>
+</head>
+<body>
+
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">PostgreSQL · schema mdm · migration 0008</div>
+    <h1>BVT MDM Data Model</h1>
+    <p class="muted">Built from the database migrations in the project folder (0001 to 0008), which define every table, column and foreign key in the <code>mdm</code> schema. 23 tables in four groups (master data, price lists, reference lists, imports and system), plus <code>alembic_version</code>.</p>
+    <div class="legend">
+      <span><b>PK</b> primary key</span>
+      <span><b>FK</b> foreign key</span>
+      <span><b>UK</b> unique</span>
+      <span><b>||--o{</b> one to many</span>
+      <span><b>||--o|</b> one to zero or one</span>
+    </div>
+  </header>
+
+  <section>
+    <h2>1. Master data and price lists</h2>
+    <p>Company, customer and vendor all extend one <code>party</code> row, which holds the code, names, EORI and country. Addresses, contacts, price lists and import templates hang off <code>party</code>, so each has a single real foreign key. A product's price is three levels down: <code>price_list</code> → <code>price_list_line</code> → <code>price_list_line_price</code>.</p>
+    <div class="frame">
+<pre class="mermaid">
+erDiagram
+    party ||--o| company : "is a"
+    party ||--o| customer : "is a"
+    party ||--o| vendor : "is a"
+    party ||--o{ address : "has"
+    party ||--o{ contact : "has"
+    customer ||--o{ customer_vendor_code : "Amazon codes"
+    party ||--o{ price_list : "owns (customer or vendor)"
+    price_list ||--o{ price_list_line : "contains"
+    price_list_line ||--o{ price_list_line_price : "priced at"
+    price_list |o--o{ price_list : "supersedes"
+
+    party {
+        uuid id PK
+        text party_type "company, customer, vendor"
+        text code UK
+        text legal_name
+        text trade_name
+        text eori
+        char2 country_code FK
+    }
+    company {
+        uuid party_id PK,FK
+        bool is_default "only one true"
+        text tax_registration_number
+    }
+    customer {
+        uuid party_id PK,FK
+        text status "active, on_hold, blocked"
+        char3 default_currency FK
+        text payment_term_code FK
+        char3 incoterm_code FK
+    }
+    vendor {
+        uuid party_id PK,FK
+        text status "active, on_hold, blocked"
+        char3 default_currency FK
+        text payment_term_code FK
+        char3 incoterm_code FK
+        int lead_time_days "0 to 730"
+        int moq
+    }
+    address {
+        uuid id PK
+        uuid party_id FK
+        text address_type
+        text line1
+        text line2
+        text postal_code
+        text city
+        text region
+        char2 country_code FK
+    }
+    contact {
+        uuid id PK
+        uuid party_id FK
+        text name
+        text role_title "job title"
+        text contact_role "vendors: sales, logistics, quality, other"
+        text email
+        text phone
+        bool is_primary "one per party"
+    }
+    customer_vendor_code {
+        uuid id PK
+        uuid customer_id FK
+        text parent_code
+        text child_code
+        char2 destination_country FK
+    }
+    price_list {
+        uuid id PK
+        uuid party_id FK
+        text name
+        char3 currency FK
+        date valid_from
+        date valid_to
+        text status "draft, active, expired"
+        int revision
+        uuid supersedes_id FK
+        text source_file_name
+        char64 source_file_sha256
+        int line_count
+        uuid imported_by FK
+    }
+    price_list_line {
+        uuid id PK
+        uuid price_list_id FK
+        int source_row
+        text ean
+        text upc
+        text asin
+        text vendor_sku
+        text description
+        text observations
+        text brand
+        text category
+        int case_pack_qty
+        int moq
+        char2 country_of_origin FK
+        text hs_code
+    }
+    price_list_line_price {
+        uuid id PK
+        uuid line_id FK
+        text price_type FK
+        numeric amount "18,4"
+        char3 currency FK
+    }
+</pre>
+    </div>
+    <p class="note">Every price row carries its own currency. One line can hold several prices (purchase, RRP, retailer cost…), each at most once per currency.</p>
+  </section>
+
+  <section>
+    <h2>2. Reference lists</h2>
+    <p>The dropdown lists. They use their standard codes as keys (ES, EUR, EXW), so a foreign key column already reads as the value.</p>
+    <div class="frame">
+<pre class="mermaid">
+erDiagram
+    country ||--o{ party : "country_code"
+    country ||--o{ address : "country_code"
+    country ||--o{ customer_vendor_code : "destination_country"
+    country ||--o{ price_list_line : "country_of_origin"
+    currency ||--o{ customer : "default_currency"
+    currency ||--o{ vendor : "default_currency"
+    currency ||--o{ price_list : "currency"
+    currency ||--o{ price_list_line_price : "currency"
+    currency ||--o{ exchange_rate : "from_ccy, to_ccy"
+    price_type ||--o{ price_list_line_price : "price_type"
+    incoterm ||--o{ customer : "incoterm_code"
+    incoterm ||--o{ vendor : "incoterm_code"
+    payment_term ||--o{ customer : "payment_term_code"
+    payment_term ||--o{ vendor : "payment_term_code"
+
+    country {
+        char2 code PK "ISO 3166"
+        text name
+    }
+    currency {
+        char3 code PK "ISO 4217"
+        text name
+        int minor_units
+    }
+    price_type {
+        text code PK "purchase, rrp, retailer_cost..."
+        text name
+        text description
+        int sort_order
+    }
+    incoterm {
+        char3 code PK "Incoterms 2020"
+        text name
+    }
+    payment_term {
+        text code PK
+        text name
+        int days
+    }
+    exchange_rate {
+        uuid id PK
+        date rate_date
+        char3 from_ccy FK
+        char3 to_ccy FK
+        numeric rate
+        text source
+    }
+</pre>
+    </div>
+    <p class="note"><code>exchange_rate</code> exists for future price and margin comparisons and is empty: the app never converts or stores converted prices.</p>
+  </section>
+
+  <section>
+    <h2>3. Imports and system</h2>
+    <p>An import job holds an uploaded file until it is committed as a price list. Templates remember a customer's or vendor's column mapping for the next file. Users, sessions and the audit log support sign-in and change history.</p>
+    <div class="frame">
+<pre class="mermaid">
+erDiagram
+    party ||--o{ import_template : "saved mappings"
+    party ||--o{ import_job : "uploads"
+    import_template |o--o{ import_job : "used by"
+    import_job ||--o{ import_issue : "validation findings"
+    import_job |o--o| price_list : "committed as"
+    app_user ||--o{ user_session : "signed in"
+    app_user |o--o{ price_list : "imported_by"
+
+    import_template {
+        uuid id PK
+        uuid party_id FK
+        text name
+        text file_type "xlsx, csv"
+        text sheet_name
+        int header_row
+        int data_start_row
+        jsonb mapping
+        char64 header_fingerprint
+    }
+    import_job {
+        uuid id PK
+        uuid party_id FK
+        text status "uploaded, validated, committed, cancelled, expired"
+        text original_name
+        char64 sha256
+        uuid template_id FK
+        jsonb settings
+        jsonb summary
+        uuid price_list_id FK
+        timestamptz expires_at
+    }
+    import_issue {
+        uuid id PK
+        uuid import_job_id FK
+        int source_row
+        text severity "warning, error"
+        text code
+        text message
+    }
+    price_list {
+        uuid id PK
+        uuid imported_by FK
+    }
+    app_user {
+        uuid id PK
+        citext email UK
+        text display_name
+        text role "admin, editor, viewer"
+        timestamptz last_login_at
+    }
+    user_session {
+        uuid id PK
+        uuid user_id FK
+        bytea token_hash UK
+        bytea csrf_hash
+        timestamptz expires_at
+    }
+    audit_log {
+        bigint id PK
+        timestamptz occurred_at
+        uuid user_id "no FK, kept after a user is deleted"
+        citext user_email
+        text entity
+        text entity_id
+        text action
+        jsonb old_values
+        jsonb new_values
+    }
+    oauth_login_state {
+        uuid id PK
+        bytea state_hash UK
+        text nonce
+        text code_verifier
+        timestamptz expires_at
+    }
+</pre>
+    </div>
+    <p class="note">Not drawn, to keep the diagrams readable: every table except the reference lists, <code>audit_log</code> and <code>oauth_login_state</code> also has <code>created_at</code>, <code>created_by</code> → <code>app_user</code>, <code>updated_at</code>, <code>updated_by</code> → <code>app_user</code>, <code>is_active</code> (soft delete) and <code>version</code> (edit-conflict check). <code>alembic_version</code> only stores the migration number.</p>
+  </section>
+
+  <section>
+    <h2>Table reference</h2>
+    <p class="muted">What each table is for and how it links to the others. Open a row for its columns and rules.</p>
+    <div class="tables">
+      <div class="group-title">Master data</div>
+      <details><summary><span class="t">party</span><span class="d">Shared identity of every company, customer and vendor</span></summary><div class="cols"><table>
+        <tr><th>Column</th><th>Notes</th></tr>
+        <tr><td>id</td><td><span class="k">PK</span>UUID</td></tr>
+        <tr><td>party_type</td><td>company, customer or vendor. Pins each child row to the right type.</td></tr>
+        <tr><td>code</td><td><span class="k">UK</span>Unique across all three types, upper-case (e.g. NOBBY, AMZ-MX)</td></tr>
+        <tr><td>legal_name / trade_name</td><td>Legal name required</td></tr>
+        <tr><td>eori</td><td>Optional, upper-case</td></tr>
+        <tr><td>country_code</td><td><span class="k">FK</span>country.code</td></tr>
+      </table></div></details>
+      <details><summary><span class="t">company</span><span class="d">BVT's own legal entities</span></summary><div class="cols"><table>
+        <tr><th>Column</th><th>Notes</th></tr>
+        <tr><td>party_id</td><td><span class="k">PK</span><span class="k">FK</span>party.id</td></tr>
+        <tr><td>is_default</td><td>Exactly one company can be the default (unique index)</td></tr>
+        <tr><td>tax_registration_number</td><td>Free text, e.g. the UAE TRN printed on invoices</td></tr>
+      </table></div></details>
+      <details><summary><span class="t">customer</span><span class="d">Buyers such as Amazon MX</span></summary><div class="cols"><table>
+        <tr><th>Column</th><th>Notes</th></tr>
+        <tr><td>party_id</td><td><span class="k">PK</span><span class="k">FK</span>party.id</td></tr>
+        <tr><td>status</td><td>active, on_hold, blocked. Separate from soft delete.</td></tr>
+        <tr><td>default_currency</td><td><span class="k">FK</span>currency.code</td></tr>
+        <tr><td>payment_term_code / incoterm_code</td><td><span class="k">FK</span>payment_term.code / incoterm.code</td></tr>
+      </table></div></details>
+      <details><summary><span class="t">vendor</span><span class="d">Brands and manufacturers: Flamingo, Lattafa, Rasasi, Nobby, Aldous…</span></summary><div class="cols"><table>
+        <tr><th>Column</th><th>Notes</th></tr>
+        <tr><td>party_id</td><td><span class="k">PK</span><span class="k">FK</span>party.id</td></tr>
+        <tr><td>status, default_currency, payment_term_code, incoterm_code</td><td>Same as customer</td></tr>
+        <tr><td>lead_time_days</td><td>0 to 730</td></tr>
+        <tr><td>moq</td><td>At least 1</td></tr>
+      </table></div></details>
+      <details><summary><span class="t">address</span><span class="d">Any number of addresses per party</span></summary><div class="cols"><table>
+        <tr><th>Column</th><th>Notes</th></tr>
+        <tr><td>party_id</td><td><span class="k">FK</span>party.id</td></tr>
+        <tr><td>address_type</td><td>registered, billing, warehouse, shipping, pickup, factory</td></tr>
+        <tr><td>line1, line2, postal_code, city, region</td><td>line1 and city required</td></tr>
+        <tr><td>country_code</td><td><span class="k">FK</span>country.code</td></tr>
+      </table></div></details>
+      <details><summary><span class="t">contact</span><span class="d">People at each party</span></summary><div class="cols"><table>
+        <tr><th>Column</th><th>Notes</th></tr>
+        <tr><td>party_id</td><td><span class="k">FK</span>party.id</td></tr>
+        <tr><td>name, role_title, email, phone</td><td>role_title is the job title</td></tr>
+        <tr><td>contact_role</td><td>Vendors: sales, logistics, quality, other</td></tr>
+        <tr><td>is_primary</td><td>One active primary contact per party</td></tr>
+      </table></div></details>
+      <details><summary><span class="t">customer_vendor_code</span><span class="d">Amazon parent/child vendor code pairs</span></summary><div class="cols"><table>
+        <tr><th>Column</th><th>Notes</th></tr>
+        <tr><td>customer_id</td><td><span class="k">FK</span>customer.party_id</td></tr>
+        <tr><td>parent_code, child_code</td><td>An active pair belongs to only one customer</td></tr>
+        <tr><td>destination_country</td><td><span class="k">FK</span>country.code, optional</td></tr>
+      </table></div></details>
+
+      <div class="group-title">Price lists</div>
+      <details><summary><span class="t">price_list</span><span class="d">One row per imported version of a customer's or vendor's list</span></summary><div class="cols"><table>
+        <tr><th>Column</th><th>Notes</th></tr>
+        <tr><td>party_id</td><td><span class="k">FK</span>party.id, customer or vendor only. History can't be deleted with the party.</td></tr>
+        <tr><td>name, currency, valid_from, valid_to</td><td>currency <span class="k">FK</span>currency.code</td></tr>
+        <tr><td>status</td><td>draft, active, expired. One active list per party, currency and overlapping period (enforced by the database).</td></tr>
+        <tr><td>revision</td><td>1, 2, 3… per party; never reused</td></tr>
+        <tr><td>supersedes_id</td><td><span class="k">FK</span>price_list.id, the active list it replaced</td></tr>
+        <tr><td>source_file_name, source_file_sha256, source_sheet, source_metadata</td><td>Traceability back to the file</td></tr>
+        <tr><td>imported_at, imported_by, notes, line_count</td><td>imported_by <span class="k">FK</span>app_user.id</td></tr>
+      </table></div></details>
+      <details><summary><span class="t">price_list_line</span><span class="d">One row per product in a version</span></summary><div class="cols"><table>
+        <tr><th>Column</th><th>Notes</th></tr>
+        <tr><td>price_list_id</td><td><span class="k">FK</span>price_list.id</td></tr>
+        <tr><td>ean, upc, asin</td><td>At least one is required. Stored as text, leading zeros kept.</td></tr>
+        <tr><td>vendor_sku, description, observations, brand, category</td><td>Brand and category are editable after import</td></tr>
+        <tr><td>case_pack_qty, moq, uom, hs_code</td><td></td></tr>
+        <tr><td>country_of_origin</td><td><span class="k">FK</span>country.code</td></tr>
+        <tr><td>dup_key, issues, raw_row, dimensions, source_row</td><td>Duplicate detection, warnings and the original row from the file</td></tr>
+      </table></div></details>
+      <details><summary><span class="t">price_list_line_price</span><span class="d">Each price of a line, with its currency</span></summary><div class="cols"><table>
+        <tr><th>Column</th><th>Notes</th></tr>
+        <tr><td>line_id</td><td><span class="k">FK</span>price_list_line.id</td></tr>
+        <tr><td>price_type</td><td><span class="k">FK</span>price_type.code</td></tr>
+        <tr><td>amount</td><td>NUMERIC(18,4), zero or more, never float</td></tr>
+        <tr><td>currency</td><td><span class="k">FK</span>currency.code. Unique per line + price type + currency.</td></tr>
+        <tr><td>source_column</td><td>Column letter in the original file</td></tr>
+      </table></div></details>
+
+      <div class="group-title">Reference lists</div>
+      <details><summary><span class="t">country · currency · price_type · incoterm · payment_term</span><span class="d">Dropdown values, keyed by their standard code</span></summary><div class="cols"><table>
+        <tr><th>Table</th><th>Content</th></tr>
+        <tr><td>country</td><td>ISO 3166 codes and names</td></tr>
+        <tr><td>currency</td><td>ISO 4217 codes, names and decimal places</td></tr>
+        <tr><td>price_type</td><td>purchase, domestic_cost, import_cost, retailer_cost, rrp, rrp_ex_vat</td></tr>
+        <tr><td>incoterm</td><td>Incoterms 2020 (EXW, FCA, FOB, DDP…)</td></tr>
+        <tr><td>payment_term</td><td>Codes such as NET60, with the number of days</td></tr>
+      </table></div></details>
+      <details><summary><span class="t">exchange_rate</span><span class="d">Reserved for future currency comparisons (empty)</span></summary><div class="cols"><table>
+        <tr><th>Column</th><th>Notes</th></tr>
+        <tr><td>rate_date, from_ccy, to_ccy, rate, source</td><td>from/to <span class="k">FK</span>currency.code. Unique per date, pair and source.</td></tr>
+      </table></div></details>
+
+      <div class="group-title">Imports and system</div>
+      <details><summary><span class="t">import_template</span><span class="d">Saved column mapping per customer or vendor</span></summary><div class="cols"><table>
+        <tr><th>Column</th><th>Notes</th></tr>
+        <tr><td>party_id</td><td><span class="k">FK</span>party.id</td></tr>
+        <tr><td>name, file_type, sheet_name, header_row, data_start_row, mapping</td><td>Name unique per party</td></tr>
+        <tr><td>header_fingerprint</td><td>Detects when next month's file has a different layout</td></tr>
+      </table></div></details>
+      <details><summary><span class="t">import_job · import_issue</span><span class="d">An upload in progress and its validation findings</span></summary><div class="cols"><table>
+        <tr><th>Column</th><th>Notes</th></tr>
+        <tr><td>import_job.party_id</td><td><span class="k">FK</span>party.id</td></tr>
+        <tr><td>import_job.status</td><td>uploaded, validated, committed, cancelled, expired</td></tr>
+        <tr><td>import_job.template_id</td><td><span class="k">FK</span>import_template.id</td></tr>
+        <tr><td>import_job.price_list_id</td><td><span class="k">FK</span>price_list.id, set when committed</td></tr>
+        <tr><td>import_issue.import_job_id</td><td><span class="k">FK</span>import_job.id. Severity warning or error, with row and message.</td></tr>
+      </table></div></details>
+      <details><summary><span class="t">app_user · user_session · oauth_login_state</span><span class="d">Who can sign in, active sessions, Google sign-in in progress</span></summary><div class="cols"><table>
+        <tr><th>Column</th><th>Notes</th></tr>
+        <tr><td>app_user.email</td><td><span class="k">UK</span>@buenavidatrading.com allow-list</td></tr>
+        <tr><td>app_user.role</td><td>admin, editor, viewer</td></tr>
+        <tr><td>user_session.user_id</td><td><span class="k">FK</span>app_user.id. Only hashes of the session token are stored.</td></tr>
+      </table></div></details>
+      <details><summary><span class="t">audit_log</span><span class="d">Append-only history of every change</span></summary><div class="cols"><table>
+        <tr><th>Column</th><th>Notes</th></tr>
+        <tr><td>occurred_at, user_id, user_email</td><td>No foreign key on purpose, so history survives a deleted user</td></tr>
+        <tr><td>entity, entity_id, action</td><td>e.g. vendor / create, price_list / import</td></tr>
+        <tr><td>old_values, new_values</td><td>JSON of what changed</td></tr>
+        <tr><td>request_id, ip</td><td></td></tr>
+      </table></div></details>
+    </div>
+  </section>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script>
+  var dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  mermaid.initialize({ startOnLoad: true, theme: dark ? 'dark' : 'default', er: { useMaxWidth: false } });
+</script>
+</body>
+</html>

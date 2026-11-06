@@ -20,7 +20,25 @@ APP_PRIVILEGE_OVERRIDES: dict[str, str] = {
 
 # Tables where mdm_app may also DELETE (session cleanup, temp import data,
 # Admin hard delete). Never audit_log or price list tables.
-APP_DELETE_TABLES: frozenset[str] = frozenset()
+APP_DELETE_TABLES: frozenset[str] = frozenset(
+    {
+        "user_session",
+        "oauth_login_state",
+        # Admin hard delete of a party (cascades to its company/address/contact rows).
+        "party",
+        "company",
+        "address",
+        "contact",
+        "customer",
+        "vendor",
+        "customer_vendor_code",
+        # Import working data (temporary) and saved mapping templates.
+        "import_job",
+        "import_issue",
+        "import_template",
+        # Never price_list / price_list_line / price_list_line_price: history is kept.
+    }
+)
 
 
 def audit_columns() -> list[sa.Column[object]]:

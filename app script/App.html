@@ -1,0 +1,85 @@
+<script>
+'use strict';
+const S={boot:null,type:'home',record:null,detail:null,list:{q:'',show:'active',sort:'code',order:'asc',page:1},lineQuery:{q:'',show:'all',brand:'',category:'',page:1},lineResult:null,plId:null,loading:0,import:null};
+const LABELS={company:'Empresas',customer:'Clientes',vendor:'Proveedores',home:'Inicio',active:'Activo',on_hold:'En espera',blocked:'Bloqueado',draft:'Borrador',expired:'Vencido',ok:'OK',warning:'Advertencia',duplicate:'Duplicado',excluded:'Excluido',removed:'Retirado'};
+const $=id=>document.getElementById(id);
+function el(tag,cls,text){const n=document.createElement(tag);if(cls)n.className=cls;if(text!=null)n.textContent=String(text);return n;}
+function btn(text,fn,cls=''){const b=el('button','btn '+cls,text);b.type='button';b.onclick=fn;return b;}
+function badge(value){return el('span','badge '+value,LABELS[value]||value);}
+function fmtDate(v){return v?String(v).slice(0,10):'—';}
+function toast(text){$('toast').textContent=text;$('toast').hidden=false;clearTimeout(S.toastTimer);S.toastTimer=setTimeout(()=>$('toast').hidden=true,4500);}
+function busy(on,text){S.loading=Math.max(0,S.loading+(on?1:-1));$('busy').hidden=!S.loading;$('busy-text').textContent=text||'Procesando…';}
+function rpc(action,p={},quiet=false){
+  if(!quiet)busy(true);
+  return new Promise((resolve,reject)=>{
+    google.script.run.withSuccessHandler(result=>{
+      if(!quiet)busy(false);if(result&&result.ok)resolve(result.data);else{const err=new Error(result&&result.error||'Respuesta no válida.');err.field=result&&result.field;reject(err);}
+    }).withFailureHandler(error=>{if(!quiet)busy(false);reject(new Error(error.message||'No se pudo conectar.'));}).api(action,Object.assign({},p,{nonce:S.boot&&S.boot.nonce}));
+  });
+}
+function errorBox(error,container){const n=el('div','form-error',error.message||String(error));container.prepend(n);}
+async function safe(fn){try{await fn();}catch(e){toast(e.message);}}
+function openModal(title,wide=false){$('modal-title').textContent=title;$('modal-body').replaceChildren();$('modal').classList.toggle('wide',wide);if(!$('modal').open)$('modal').showModal();return $('modal-body');}
+function closeModal(){if(S.import&&S.import.running)return; $('modal').close();}
+$('close-modal').onclick=()=>safe(async()=>{if(S.import){if(S.import.running)return;if(!confirm('¿Cancelar esta importación?'))return;await rpc('cancelImport',{id:S.import.job.id});S.import=null;}$('modal').close();});
+$('modal').addEventListener('cancel',event=>{if(S.import){event.preventDefault();$('close-modal').click();}});
+function setNav(type){S.type=type;document.querySelectorAll('[data-nav]').forEach(b=>b.classList.toggle('selected',b.dataset.nav===type));$('breadcrumb').textContent='MDM / '+LABELS[type];}
+document.querySelectorAll('[data-nav]').forEach(b=>b.onclick=()=>navigate(b.dataset.nav));
+async function navigate(type){setNav(type);S.record=null;S.detail=null;S.list={q:'',show:'active',sort:'code',order:'asc',page:1};if(type==='home')await safe(home);else await safe(renderList);}
+function heading(eyebrow,title,subtitle,action){const wrap=el('div','page-heading'),left=el('div');left.append(el('div','eyebrow',eyebrow),el('h1','',title));if(subtitle)left.append(el('div','subtitle',subtitle));wrap.append(left);if(action)wrap.append(action);return wrap;}
+async function home(){
+  const boot=await rpc('bootstrap');S.boot=boot;$('user-email').textContent=boot.email;
+  const main=$('main');main.replaceChildren(heading('BUENA VIDA TRADING','Todo empieza con buenos datos.','Gestiona tus empresas y relaciones comerciales en un solo lugar.'));
+  const stats=el('div','stats');[['Empresas',boot.counts.companies,'company'],['Clientes',boot.counts.customers,'customer'],['Proveedores',boot.counts.vendors,'vendor'],['Versiones de precios',boot.counts.priceLists,null]].forEach(([label,count,type])=>{const card=el('div','stat');card.append(el('div','stat-label',label),el('div','stat-value',count),el('small','',type?'Registros activos':'Historial disponible'));if(type){card.style.cursor='pointer';card.onclick=()=>navigate(type);}stats.append(card);});main.append(stats);
+  const welcome=el('section','welcome'),copy=el('div','welcome-copy');copy.append(el('div','eyebrow','TU CENTRO DE DATOS MAESTROS'),el('h2','','Información consistente, de origen a destino.'),el('p','','Mantén al día los datos de BVT, tus clientes y tus proveedores. Consulta cada lista de precios con su moneda y su historial de versiones.'),btn('Ver proveedores  →',()=>navigate('vendor'),'primary'));const art=el('div','welcome-art'),circle=el('div','art-circle');circle.append(el('div','art-leaf','❧'));art.append(circle);welcome.append(copy,art);main.append(welcome);
+  const section=el('div','section-head');section.append(el('h3','','Gestiona tu información'),el('span','muted','3 módulos conectados'));main.append(section);
+  const modules=el('div','module-grid');[['company','▤','Tus empresas','Identidad legal, direcciones y personas de contacto.'],['customer','◉','Tus clientes','Condiciones comerciales, códigos Amazon y precios.'],['vendor','◇','Tus proveedores','Fabricantes, contactos y listas de compra.']].forEach(([type,icon,title,text])=>{const card=el('button','module-card');card.append(el('span','module-icon',icon),el('h3','',title),el('p','',text),el('span','arrow','Abrir '+LABELS[type].toLowerCase()+'  →'));card.onclick=()=>navigate(type);modules.append(card);});main.append(modules);
+}
+async function loadDetail(id){
+  S.detail=await rpc('detail',{type:S.type,id:id});S.record=S.detail.record;const r=S.record,main=$('main');main.replaceChildren();
+  main.append(btn('← Volver a '+LABELS[S.type].toLowerCase(),()=>safe(renderList),'link back'));
+  const actions=el('div','actions');if(r.active===true||String(r.active).toUpperCase()==='TRUE'){actions.append(btn('Editar datos',()=>recordForm(r),'primary'),btn('Retirar',()=>confirmAction('Retirar registro','El registro y su historial se conservarán.',null,()=>rpc('setActive',{type:S.type,id:r.id,version:r.version,active:false}).then(()=>loadDetail(r.id))),'danger'));}else{actions.append(btn('Reactivar',()=>safe(async()=>{await rpc('setActive',{type:S.type,id:r.id,version:r.version,active:true});await loadDetail(r.id);}),'primary'),btn('Eliminar definitivamente',()=>confirmAction('Eliminar definitivamente','Esta acción elimina la ficha y sus direcciones y contactos. El registro debe estar retirado y no haber tenido listas de precios.',r.code,()=>rpc('deleteParty',{type:S.type,id:r.id,version:r.version,confirm:r.code}).then(renderList)),'danger'));}
+  main.append(heading(r.code,r.legal_name,r.trade_name||LABELS[S.type],actions));
+  const panel=el('section','panel'),head=el('div','panel-header');head.append(el('h3','','Información general'),badge(isActive(r)?r.status||'active':'removed'));panel.append(head);
+  const grid=el('div','panel-body detail-grid');partyFields(S.type).forEach(f=>{const n=el('div','detail-field');n.append(el('label','',f.label),el('div','',displayField(f,r[f.key])));grid.append(n);});panel.append(grid);
+  if(S.type==='company'){const a=el('div','panel-body');a.append(r.is_default===true||String(r.is_default).toUpperCase()==='TRUE'?badge('Predeterminada'):btn('Hacer predeterminada',()=>safe(async()=>{await rpc('makeDefault',{id:r.id,version:r.version});await loadDetail(r.id);}),'small'));panel.append(a);}main.append(panel);
+  const cols=el('div','two-columns');cols.append(childSection('Addresses','Direcciones',S.detail.addresses),childSection('Contacts','Contactos',S.detail.contacts));main.append(cols);
+  if(S.type==='customer')main.append(childSection('VendorCodes','Códigos Amazon',S.detail.vendorCodes));
+  if(S.type!=='company')await priceSection();
+  const meta=el('p','muted');meta.style.fontSize='10px';meta.textContent='Última actualización: '+fmtDate(r.updated_at)+' · '+r.updated_by+' · Versión '+r.version;main.append(meta);
+}
+function isActive(row){return row.active===true||String(row.active).toUpperCase()==='TRUE';}
+function displayField(field,value){if(value==null||value==='')return '—';if(field.lookup){const row=S.boot.lookups.find(r=>r.kind===field.lookup&&r.code===value);return row?value+' · '+row.name:value;}if(field.options){const item=field.options.find(v=>v[0]===value);return item?item[1]:value;}return value;}
+function childSection(table,title,rows){
+  const panel=el('section','panel'),header=el('div','panel-header');header.append(el('h3','',title));if(isActive(S.record))header.append(btn('+ Añadir',()=>childForm(table),'small'));panel.append(header);const body=el('div','panel-body');
+  if(!rows.length)body.append(el('p','muted','Todavía no hay '+title.toLowerCase()+'.'));
+  rows.forEach(r=>{const card=el('div','record-card'),title=table==='Addresses'?displayField({options:addressTypes()},r.address_type):table==='Contacts'?r.name:r.parent_code+' / '+r.child_code;card.append(el('strong','',title));
+    if(!isActive(r))card.append(badge('removed'));if(table==='Contacts'&&(r.is_primary===true||String(r.is_primary).toUpperCase()==='TRUE'))card.append(el('span','badge active','Principal'));
+    const text=table==='Addresses'?[r.line1,r.line2,[r.postal_code,r.city].filter(Boolean).join(' '),r.region,r.country_code].filter(Boolean).join(', '):table==='Contacts'?[r.role_title,r.contact_role,r.email,r.phone].filter(Boolean).join(' · '):r.destination_country||'Sin destino específico';card.append(el('p','',text));
+    if(isActive(S.record)){const a=el('div','actions');if(isActive(r)){a.append(btn('Editar',()=>childForm(table,r),'link'));if(table==='Contacts')a.append(btn('Hacer principal',()=>safe(()=>rpc('childAction',{table:table,id:r.id,version:r.version,action:'primary'}).then(()=>loadDetail(S.record.id))),'link'));}a.append(btn(isActive(r)?'Retirar':'Reactivar',()=>confirmAction(isActive(r)?'Retirar registro':'Reactivar registro','Se guardará el cambio en el historial.',null,()=>rpc('childAction',{table:table,id:r.id,version:r.version,action:isActive(r)?'remove':'reactivate'}).then(()=>loadDetail(S.record.id))),'link'));card.append(a);}body.append(card);
+  });panel.append(body);return panel;
+}
+async function priceSection(){
+  const lists=S.detail.priceLists,section=el('section','panel');section.id='prices';const head=el('div','panel-header'),left=el('div');left.append(el('h3','','Lista de precios'),el('small','muted','Cada importación conserva una nueva versión.'));head.append(left);if(isActive(S.record))head.append(btn('↑ Importar lista de precios',startImport,'primary'));section.append(head);$('main').append(section);
+  if(!lists.length){section.append(el('div','empty','Todavía no hay listas de precios para este registro.'));return;}
+  const bar=el('div','toolbar'),select=el('select','version-select');select.setAttribute('aria-label','Versión de precios');lists.forEach(pl=>{const o=el('option','',pl.name+' · v'+pl.revision+' · '+(LABELS[pl.effective_status]||pl.status));o.value=pl.id;select.append(o);});if(!lists.some(l=>l.id===S.plId))S.plId=lists[0].id;select.value=S.plId;select.onchange=()=>{S.plId=select.value;S.lineQuery={q:'',show:'all',brand:'',category:'',page:1};safe(renderLines);};bar.append(select);section.append(bar);section.append(el('div','',''));const lines=el('div');lines.id='price-lines';section.append(lines);await renderLines();
+}
+async function renderLines(){
+  const result=await rpc('lines',Object.assign({id:S.plId},S.lineQuery));S.lineResult=result;const pl=result.priceList,wrap=$('price-lines');if(!wrap)return;wrap.replaceChildren();
+  const meta=el('div','panel-body');meta.append(el('div','file-name',pl.source_file_name+' · '+pl.currency+' · '+pl.valid_from+' — '+(pl.valid_to||'sin fecha final')),el('small','muted','Importado por '+pl.imported_by+' · Actualizado '+fmtDate(pl.updated_at)+' por '+pl.updated_by));
+  const actions=el('div','actions');actions.style.marginTop='12px';if(isActive(S.record)&&pl.status==='draft'){actions.append(btn('Activar versión',()=>confirmAction('Activar esta versión','Las versiones activas con la misma moneda y período se marcarán como vencidas.',null,()=>rpc('activate',{id:pl.id,version:pl.version}).then(()=>loadDetail(S.record.id))),'small primary'),btn('Retirar borrador',()=>confirmAction('Retirar borrador','Las versiones activas y vencidas se conservan. Escribe el nombre del borrador.',pl.name,()=>rpc('deleteDraft',{id:pl.id,version:pl.version,confirm:pl.name}).then(()=>loadDetail(S.record.id))),'small danger'));}meta.append(actions);if(result.duplicateGroups)meta.append(el('p','note notice',result.duplicateGroups+' grupos duplicados. Excluye las líneas sobrantes antes de activar.'));wrap.append(meta);
+  const toolbar=el('div','toolbar'),search=el('input','search');search.type='search';search.placeholder='Buscar EAN, ASIN o descripción…';search.value=S.lineQuery.q;search.setAttribute('aria-label','Buscar productos');let debounce;search.oninput=()=>{clearTimeout(debounce);debounce=setTimeout(()=>{S.lineQuery.q=search.value;S.lineQuery.page=1;safe(renderLines);},450);};toolbar.append(search);
+  [['category','Categoría',result.facets.categories],['brand','Marca',result.facets.brands],['show','Mostrar',['all','warning','duplicate','excluded']]].forEach(([key,label,values])=>{const select=el('select');select.setAttribute('aria-label',label);if(key!=='show'){const o=el('option','',label+': todas');o.value='';select.append(o);}values.forEach(v=>{const o=el('option','',key==='show'?(v==='all'?'Todas las incluidas':LABELS[v]):v||'Sin asignar');o.value=key==='show'?v:v||'__none__';select.append(o);});select.value=S.lineQuery[key];select.onchange=()=>{S.lineQuery[key]=select.value;S.lineQuery.page=1;safe(renderLines);};toolbar.append(select);});wrap.append(toolbar);
+  const columns=[['source_row','Fila'],['ean','EAN / UPC'],['asin','ASIN'],['description','Descripción'],['brand','Marca'],['category','Categoría'],['line_status','Estado']];
+  result.priceColumns.forEach(c=>columns.push([c.amount_field,c.price_type+' '+(c.currency||'')])) ;columns.push(['_actions','']);
+  wrap.append(dataTable(result.items,columns,(r,key)=>{
+    if(key==='ean')return r.ean||r.upc||'—';if(key==='line_status')return badge(r.line_status);
+    const pc=result.priceColumns.find(c=>c.amount_field===key);if(pc)return el('span','price-cell',r[key]?r[key]+' '+r[pc.currency_field]:'—');
+    if(key==='_actions'){const a=el('div','actions');if(isActive(S.record)){a.append(btn('Editar',()=>lineForm(r),'link'));if(pl.status==='draft')a.append(btn(isActive(r)?'Excluir':'Incluir',()=>safe(async()=>{await rpc('editLine',{price_list_id:pl.id,id:r.id,version:r.version,action:isActive(r)?'exclude':'include'});await renderLines();}),'link'));}return a;}return r[key]||'—';
+  },null,key=>{S.lineQuery.sort=key;S.lineQuery.order=S.lineQuery.order==='asc'?'desc':'asc';safe(renderLines);}));
+  wrap.append(pager(result,page=>{S.lineQuery.page=page;safe(renderLines);}));
+  const history=el('details','panel-body');history.append(el('summary','','Historial de versiones ('+S.detail.priceLists.length+')'));const historyTable=dataTable(S.detail.priceLists,[['revision','Versión'],['name','Nombre'],['currency','Moneda'],['valid_from','Desde'],['valid_to','Hasta'],['effective_status','Estado'],['imported_by','Importado por']],(r,k)=>k==='effective_status'?badge(r[k]):r[k]||'—',r=>{S.plId=r.id;safe(renderLines);});history.append(historyTable);wrap.append(history);
+}
+async function init(){try{S.boot=await rpc('bootstrap');$('user-email').textContent=S.boot.email;await home();}catch(e){$('main').replaceChildren(el('div','empty',e.message));}}
+document.addEventListener('DOMContentLoaded',init);
+</script>
